@@ -15,9 +15,11 @@ used for this run. Use one registration method; do not replace your entire
 existing configuration with this snippet. Change the URL if using another port.
 
 Launch a fresh Codex session from a separate agent workspace, outside the
-benchmark checkout, and supply the incident query and namespace. The same
-configuration supports Boutique and TrainTicket; the running server determines
-the tools and active case. Start a fresh session for each case.
+benchmark checkout, and supply the incident query, namespace, and case ID
+(such as `case_id: boutique/runtime/1` or `case_id: trainticket/runtime/1`).
+The same configuration and running server support both systems. Keep the case
+ID consistent throughout one diagnosis; it selects the snapshot for each
+tool call.
 
 This example registers the diagnostic interface only. It does not configure
 Skills, a model provider, a diagnostic budget, or a batch evaluator. The

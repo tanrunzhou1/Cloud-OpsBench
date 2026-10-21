@@ -238,10 +238,12 @@ but keep separate evaluator copies to remain self-contained.
 ## MCP Interface
 
 [`cloudopsbench_mcp/`](cloudopsbench_mcp/README.md) exposes the existing
-diagnostic tools through Streamable HTTP: **12 tools for Online Boutique** and
-**10 for TrainTicket**. Each server instance serves one incident snapshot and
-records diagnostic tool calls, allowing MCP-compatible agents to use the
-benchmark without the bundled ReAct agent.
+diagnostic tools through Streamable HTTP. One server instance serves both
+Online Boutique and TrainTicket cases, exposes the same twelve-tool catalog,
+and selects the snapshot from each tool call's `case_id`. Tool calls are
+recorded for MCP-compatible agents to use the benchmark without the bundled
+ReAct agent. Boutique source-code tools return an explicit MCP error for
+TrainTicket cases, which do not include Boutique source code.
 
 See the [server quickstart](cloudopsbench_mcp/README.md) and minimal connection
 examples for [Codex](cloudopsbench_mcp/examples/codex/README.md) and

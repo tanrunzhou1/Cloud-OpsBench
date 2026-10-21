@@ -14,10 +14,11 @@ From that workspace, check the connection:
 opencode mcp list
 ```
 
-Launch a fresh OpenCode session and supply the incident query and namespace.
-The running server determines the active case and the system's tool catalog;
-no client configuration change is needed to switch between Boutique and
-TrainTicket. Restart the server and begin a new session for each case.
+Launch an OpenCode session and supply the incident query, namespace, and case
+ID (such as `case_id: boutique/runtime/1` or `case_id: trainticket/runtime/1`).
+The same configuration and running server support both systems. Keep the case
+ID consistent throughout one diagnosis; it selects the snapshot for each
+tool call.
 
 This example registers the diagnostic interface only. It does not configure
 Skills, a model provider, a diagnostic budget, or a batch evaluator.

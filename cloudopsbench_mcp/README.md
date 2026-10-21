@@ -1,22 +1,27 @@
 # Cloud-OpsBench MCP Server
 
-Connect an MCP-compatible agent to a Cloud-OpsBench incident snapshot without
-using the bundled ReAct agent. This package serves the existing diagnostic tools
-through **Streamable HTTP** and supports both benchmark systems:
+Connect an MCP-compatible agent to Cloud-OpsBench incident snapshots without
+using the bundled ReAct agent. The server exposes the existing diagnostic
+backend through Streamable HTTP and serves both benchmark systems from one
+process.
 
-| System | Dataset directory | Server system setting | Tools |
-| --- | --- | --- | ---: |
-| Online Boutique | `benchmark/boutique/` | `boutique` | 12 |
-| TrainTicket | `benchmark/trainticket/` | `train-ticket` | 10 |
+| System | Dataset directory | Tools exposed |
+| --- | --- | ---: |
+| Online Boutique | `benchmark/boutique/` | 12 |
+| TrainTicket | `benchmark/trainticket/` | 12 |
 
-Tool names, descriptions, argument schemas, and execution come directly from
-`agents/cloudops_agent/tools/`. There is no separate MCP copy of the diagnostic
-backend. The server requires no LLM API key, model configuration, or live cluster.
+Every tool call selects its case with a `case_id` argument such as
+`boutique/runtime/1` or `trainticket/runtime/1`. The server resolves that ID
+under the configured dataset root and loads the corresponding existing tool
+backend. It does not read the case's `metadata.json`, process labels, or golden
+trajectories. No LLM API key, model configuration, or live cluster is required.
 
-One server instance serves one case selected at startup. Clients discover its
-tools using `tools/list` and call them using `tools/call`; they cannot select a
-different case through a tool argument. The server does not expose MCP resources,
-MCP prompts, Skills, or `SelectSymptom`.
+The public tool catalog and schemas stay stable across cases. Boutique-only
+source tools remain visible for TrainTicket so agents can be evaluated on
+their tool choice; those calls return an explicit MCP tool error because
+TrainTicket has no Boutique source-code snapshot. `GetResources` publishes a
+union schema for the backend variants. Arguments unsupported by the selected
+case return an explicit validation error.
 
 ## Installation
 
@@ -27,49 +32,31 @@ python -m venv .venv
 .venv/bin/python -m pip install -r cloudopsbench_mcp/requirements.txt
 ```
 
-The MCP requirements cover the diagnostic backend dependencies used here; an
-OpenAI client package is not needed to run the server.
-
-## Start a Boutique case
+## Start the multi-case server
 
 From the repository root:
 
 ```bash
-export CLOUDOPSBENCH_CASE_PATH="$PWD/benchmark/boutique/runtime/1"
-export CLOUDOPSBENCH_SYSTEM="boutique"
-export CLOUDOPSBENCH_FAULT_CATEGORY="runtime"
-export CLOUDOPSBENCH_RUN_ID="boutique-runtime-1"
-export CLOUDOPSBENCH_TRACE_PATH="$PWD/.runs/boutique-runtime-1/mcp.jsonl"
-
+export CLOUDOPSBENCH_DATASET_ROOT="$PWD/benchmark"
+export CLOUDOPSBENCH_RUN_ID="manual-mcp-session"
+export CLOUDOPSBENCH_TRACE_PATH="$PWD/.runs/manual-mcp-session/mcp.jsonl"
+export CLOUDOPSBENCH_MCP_HOST="127.0.0.1"
+export CLOUDOPSBENCH_MCP_PORT="8000"
+unset CLOUDOPSBENCH_MAX_TOOL_CALLS
 .venv/bin/python -m cloudopsbench_mcp
 ```
 
-Leave the server running while the agent diagnoses the case. Its endpoint is
-`http://127.0.0.1:8000/mcp`. Stop it with Ctrl-C before starting another case.
-For a code-defect case, select its `benchmark/boutique/codedefect/<id>` directory
-and set `CLOUDOPSBENCH_FAULT_CATEGORY="codedefect"`.
+Leave the process running at `http://127.0.0.1:8000/mcp`. Each tool call can
+select a different case, so switching between Boutique and TrainTicket does
+not require a server restart or a new port. Do not pass filesystem paths in
+tool arguments; the server accepts only case IDs beneath
+`CLOUDOPSBENCH_DATASET_ROOT`.
 
-## Start a TrainTicket case
-
-From the repository root:
-
-```bash
-export CLOUDOPSBENCH_CASE_PATH="$PWD/benchmark/trainticket/service/25"
-export CLOUDOPSBENCH_SYSTEM="train-ticket"
-export CLOUDOPSBENCH_FAULT_CATEGORY="service"
-export CLOUDOPSBENCH_RUN_ID="trainticket-service-25"
-export CLOUDOPSBENCH_TRACE_PATH="$PWD/.runs/trainticket-service-25/mcp.jsonl"
-
-.venv/bin/python -m cloudopsbench_mcp
-```
-
-The directory is named **`trainticket`**, while the diagnostic backend setting is
-**`train-ticket`**. The client configuration is identical for both systems; the
-server supplies the appropriate catalog and tool descriptions.
-
-If a client cannot connect despite the server being ready, check that its HTTP
-proxy excludes `127.0.0.1` and `localhost`. Local MCP traffic must go directly to
-the loopback server, not through a proxy.
+For an isolated evaluation, make the configured dataset root contain only the
+case directories that the server is allowed to access. Each case directory
+must include `tool_cache.json`; `raw_data/logs.json` and `code/` are read when
+available. Keep `process-label/` and `golden-trajectory/` outside the server's
+accessible directory tree.
 
 ## Connect an agent
 
@@ -78,18 +65,22 @@ Start the server first, then follow one of the minimal client examples:
 - [Codex](examples/codex/README.md), with a `config.toml` snippet.
 - [OpenCode](examples/opencode/README.md), with an `opencode.json` example.
 
-Configure the task model and credentials in the client. The examples contain no
-API credentials, model-specific settings, or evolved diagnostic knowledge.
-Use a separate agent workspace and supply the incident's `query` and `namespace`
-from `metadata.json` as the task description. Its ground-truth `result` field is
-for the evaluator, not the agent. For example:
+The diagnosis request must include the case's `case_id` along with the query
+and namespace. For example:
 
 ```text
-Diagnose the reported incident in namespace <namespace>.
-Incident report: <query>
-Use the cloudopsbench MCP tools to collect incident evidence.
+case_id: boutique/runtime/1
+Diagnose the reported incident in namespace boutique.
+Incident report: <query from metadata.json>
+Use the cloudopsbench MCP tools to collect evidence.
 Identify the faulty component and root cause, and explain the supporting evidence.
 ```
+
+For a TrainTicket case, use an ID such as `trainticket/runtime/1` and its
+namespace. MCP clients that call tools directly must include the same
+`case_id` in every tool call. A benchmark runner may inject the case ID and a
+per-run `run_id` automatically. The case ID in the call selects the snapshot;
+the trace stores both IDs to correlate tool calls.
 
 This is a connection example, not a full batch-evaluation runner. The client
 owns reasoning and final-answer generation; the server supplies tool results.
@@ -98,7 +89,7 @@ JSONL trace alone is not the bundled agent's evaluation input format.
 
 ## Tool catalog
 
-Both systems expose these ten tools:
+All cases expose these twelve tools:
 
 ```text
 GetResources                 DescribeResource
@@ -106,72 +97,50 @@ GetAppYAML                   GetRecentLogs
 GetErrorLogs                 CheckServiceConnectivity
 GetServiceDependencies       GetClusterConfiguration
 GetAlerts                    CheckNodeServiceStatus
+ListCodeFiles                GetSourceCode
 ```
 
-Boutique additionally exposes `ListCodeFiles` and `GetSourceCode`. TrainTicket
-does not have source-code tools. Argument schemas follow the selected backend,
-including the extended `GetResources` schema for Boutique code-defect cases.
-Clients should discover schemas rather than hard-code one across all cases.
+The schemas are stable across cases. `GetResources` accepts the union of the
+current backend parameters; `label_selector` is supported by the Boutique
+runtime schema, while `output_yaml` is supported by TrainTicket and Boutique
+code-defect schemas. Passing a parameter unsupported by the selected case
+returns a tool error rather than silently ignoring it. The source-code tools
+work when the selected case is Boutique and return an explicit error for
+TrainTicket.
 
 ## Server configuration
 
-Configuration is supplied by the trusted launcher through environment variables:
+Configuration is supplied by the trusted launcher through environment
+variables:
 
 | Variable | Required / default | Meaning |
 | --- | --- | --- |
-| `CLOUDOPSBENCH_CASE_PATH` | Required | Active case directory or restricted snapshot view |
-| `CLOUDOPSBENCH_FAULT_CATEGORY` | Required | Case category; preserves native tool-schema selection |
-| `CLOUDOPSBENCH_SYSTEM` | `boutique` | `boutique` or `train-ticket` |
+| `CLOUDOPSBENCH_DATASET_ROOT` | Required | Dataset directory containing `boutique/` and/or `trainticket/` |
 | `CLOUDOPSBENCH_MCP_HOST` | `127.0.0.1` | Bind address |
 | `CLOUDOPSBENCH_MCP_PORT` | `8000` | HTTP port |
-| `CLOUDOPSBENCH_RUN_ID` | Generated UUID | Run identifier in the trace |
+| `CLOUDOPSBENCH_RUN_ID` | Generated UUID | Default trace run identifier, overridden per call when provided |
 | `CLOUDOPSBENCH_TRACE_PATH` | `/tmp/cloudopsbench-mcp-trajectory.jsonl` | Append-only JSONL trace path |
-| `CLOUDOPSBENCH_MAX_TOOL_CALLS` | Unset: unlimited | Optional positive limit on admitted tool requests |
+| `CLOUDOPSBENCH_MAX_TOOL_CALLS` | Unset: unlimited | Optional process-wide limit on admitted tool requests |
 
-For concurrent cases, use a separate server instance, port, run ID, and trace
-file for each case. Restart the server and the agent session when changing cases.
+The accepted case ID format is `<system>/<fault-category>/<case-id>`, where
+`system` is `boutique` or `trainticket`. The server resolves and checks the
+resulting path against the configured dataset root before loading a backend.
 
-By default, there is no tool-call limit. If a launcher sets
-`CLOUDOPSBENCH_MAX_TOOL_CALLS`, requests beyond the limit return an MCP tool error
-without executing the backend. Admitted invalid requests count toward the limit.
-The server does not terminate the client or declare a diagnosis incorrect;
-evaluation runners define their own stopping and scoring policies.
+By default, there is no tool-call limit. A configured limit applies to the
+whole server process across all cases and evaluation runs. Requests beyond
+the limit return an MCP tool error without executing the backend or adding a
+trace entry.
 
 ## Tool-call traces
 
-Each admitted request is appended to the trace with `run_id`, `sequence`, UTC
-`timestamp`, `tool_name`, validated `arguments` (original arguments on validation
-errors), complete `output`, `is_error`, and `duration_ms`. Rejected over-budget
-requests do not execute the backend and are not appended. Use a fresh trace file
-per run; reusing a path appends to the existing log.
+Each admitted request is appended to the trace with `run_id`, `case_id`,
+`sequence`, UTC `timestamp`, `tool_name`, validated `arguments`, complete
+`output`, `is_error`, and `duration_ms`. Invalid requests retain their original
+arguments for diagnosis. Rejected over-budget requests are not appended. Use
+a fresh trace file per server session when you need a clean log; reusing a
+path appends to the existing log.
 
-Adapter errors are returned with MCP `isError=true`. Native backend messages,
-including errors already represented as text by the original tools, are
-preserved rather than reinterpreted as new diagnostic judgments.
-
-## Benchmark data boundary
-
-The local commands above help check integration. For isolated benchmark runs,
-the launcher should expose only the active snapshot files to the server:
-
-- `tool_cache.json`
-- `raw_data/`
-- `code/` when present (Boutique)
-
-Keep `metadata.json`, `process-label/`, and `golden-trajectory/` outside that
-snapshot view. Keep benchmark files, labels, and server traces outside the agent
-workspace. The MCP interface does not itself sandbox the client's filesystem;
-the benchmark runner or container configuration provides that isolation.
-
-## Offline checks
-
-From the repository root:
-
-```bash
-.venv/bin/python -m unittest discover -s cloudopsbench_mcp/tests -v
-```
-
-Tests check both systems' catalogs, backend-equivalent results, argument
-validation, optional request limits, restricted snapshot access, and real
-loopback HTTP connections. They require the repository snapshots and make no
-LLM or external network calls.
+Native backend messages that are already returned as text remain text results.
+Errors raised at the MCP boundary, including unsupported TrainTicket
+source-code calls and invalid case/tool arguments, are returned with
+`isError=true`.
